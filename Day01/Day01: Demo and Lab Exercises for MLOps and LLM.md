@@ -1,0 +1,724 @@
+# Complete Demo and Lab Exercises for MLOps and LLM Observability Course
+
+## Day 1: MLOps Overview and LLM Introduction Lab
+
+### Demo 1: Environment Verification (15 minutes)
+
+**Step 1: Verify Python Installation**
+
+```bash
+# Check Python version
+python --version
+# Should show Python 3.10 or higher
+
+# Check pip installation
+pip --version
+```
+
+**Step 2: Create Project Directory**
+
+```bash
+# Create main project folder
+mkdir mlops-llm-course
+cd mlops-llm-course
+
+# Create subdirectories
+mkdir data models notebooks logs
+```
+
+**Step 3: Set up Virtual Environment**
+
+```bash
+# Create virtual environment
+python -m venv mlops-env
+
+# Activate virtual environment
+# On Windows:
+mlops-env\Scripts\activate
+# On Mac/Linux:
+source mlops-env/bin/activate
+```
+
+**Step 4: Install Required Libraries**
+
+```bash
+pip install pandas scikit-learn matplotlib seaborn jupyter requests python-dotenv flask
+```
+
+### Lab Exercise 1: Basic MLOps Workflow Setup (45 minutes)
+
+**Step 1: Create a Simple Dataset (10 minutes)**
+
+Create file: `notebooks/data_preparation.ipynb`
+
+```python
+import pandas as pd
+import numpy as np
+from sklearn.datasets import make_classification
+from sklearn.model_selection import train_test_split
+import os
+
+# Set random seed for reproducibility
+np.random.seed(42)
+
+# Generate synthetic classification dataset
+X, y = make_classification(
+    n_samples=1000,
+    n_features=10,
+    n_informative=5,
+    n_redundant=2,
+    n_clusters_per_class=1,
+    random_state=42
+)
+
+# Create DataFrame
+feature_names = [f'feature_{i}' for i in range(X.shape[1])]
+df = pd.DataFrame(X, columns=feature_names)
+df['target'] = y
+
+# Display basic information
+print("Dataset Shape:", df.shape)
+print("\nFirst 5 rows:")
+print(df.head())
+
+print("\nTarget distribution:")
+print(df['target'].value_counts())
+
+# Save dataset
+df.to_csv('../data/synthetic_dataset.csv', index=False)
+print("\nDataset saved to data/synthetic_dataset.csv")
+```
+
+**Step 2: Create Basic ML Model (15 minutes)**
+
+Create file: `notebooks/model_training.ipynb`
+
+```python
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+import matplotlib.pyplot as plt
+import seaborn as sns
+import joblib
+import os
+from datetime import datetime
+
+# Load dataset
+df = pd.read_csv('../data/synthetic_dataset.csv')
+
+# Separate features and target
+X = df.drop('target', axis=1)
+y = df['target']
+
+# Split data
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y
+)
+
+print(f"Training set size: {X_train.shape[0]}")
+print(f"Test set size: {X_test.shape[0]}")
+
+# Train multiple models
+models = {
+    'RandomForest': RandomForestClassifier(n_estimators=100, random_state=42),
+    'LogisticRegression': LogisticRegression(random_state=42, max_iter=1000)
+}
+
+results = {}
+
+for name, model in models.items():
+    print(f"\nTraining {name}...")
+
+    # Train model
+    model.fit(X_train, y_train)
+
+    # Make predictions
+    y_pred = model.predict(X_test)
+
+    # Calculate metrics
+    accuracy = accuracy_score(y_test, y_pred)
+
+    # Store results
+    results[name] = {
+        'model': model,
+        'accuracy': accuracy,
+        'predictions': y_pred
+    }
+
+    print(f"{name} Accuracy: {accuracy:.4f}")
+
+    # Save model
+    model_filename = f"../models/{name.lower()}_model_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl"
+    joblib.dump(model, model_filename)
+    print(f"Model saved: {model_filename}")
+
+# Select best model
+best_model_name = max(results.keys(), key=lambda k: results[k]['accuracy'])
+best_model = results[best_model_name]['model']
+
+print(f"\nBest Model: {best_model_name} with accuracy: {results[best_model_name]['accuracy']:.4f}")
+
+# Detailed evaluation of best model
+print(f"\nDetailed evaluation for {best_model_name}:")
+print(classification_report(y_test, results[best_model_name]['predictions']))
+
+# Confusion Matrix
+plt.figure(figsize=(8, 6))
+cm = confusion_matrix(y_test, results[best_model_name]['predictions'])
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+plt.title(f'Confusion Matrix - {best_model_name}')
+plt.ylabel('Actual')
+plt.xlabel('Predicted')
+plt.show()
+```
+
+**Step 3: Basic Model Deployment with Flask (20 minutes)**
+
+Create file: `app.py`
+
+```python
+from flask import Flask, request, jsonify
+import joblib
+import pandas as pd
+import numpy as np
+import os
+from datetime import datetime
+
+app = Flask(__name__)
+
+# Load the latest model
+def load_latest_model():
+    models_dir = 'models'
+    if not os.path.exists(models_dir):
+        return None
+
+    model_files = [f for f in os.listdir(models_dir) if f.endswith('.pkl')]
+    if not model_files:
+        return None
+
+    # Get the most recent model file
+    latest_model = max(model_files, key=lambda x: os.path.getctime(os.path.join(models_dir, x)))
+    model_path = os.path.join(models_dir, latest_model)
+
+    return joblib.load(model_path), latest_model
+
+model, model_name = load_latest_model()
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({
+        'status': 'healthy',
+        'model_loaded': model is not None,
+        'model_name': model_name if model else None,
+        'timestamp': datetime.now().isoformat()
+    })
+
+@app.route('/predict', methods=['POST'])
+def predict():
+    try:
+        if model is None:
+            return jsonify({'error': 'No model loaded'}), 500
+
+        # Get JSON data from request
+        data = request.get_json()
+
+        # Convert to DataFrame
+        features = pd.DataFrame([data['features']])
+
+        # Make prediction
+        prediction = model.predict(features)[0]
+        probability = model.predict_proba(features)[0].tolist()
+
+        # Log prediction (basic logging)
+        log_entry = {
+            'timestamp': datetime.now().isoformat(),
+            'features': data['features'],
+            'prediction': int(prediction),
+            'probability': probability
+        }
+
+        # Save to log file
+        import json
+        with open('logs/predictions.log', 'a') as f:
+            f.write(json.dumps(log_entry) + '\n')
+
+        return jsonify({
+            'prediction': int(prediction),
+            'probability': probability,
+            'model_used': model_name
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/metrics', methods=['GET'])
+def get_metrics():
+    try:
+        # Read prediction logs
+        metrics = {
+            'total_predictions': 0,
+            'predictions_today': 0,
+            'class_distribution': {}
+        }
+
+        if os.path.exists('logs/predictions.log'):
+            import json
+            from datetime import date
+
+            today = date.today().isoformat()
+
+            with open('logs/predictions.log', 'r') as f:
+                for line in f:
+                    if line.strip():
+                        log_entry = json.loads(line.strip())
+                        metrics['total_predictions'] += 1
+
+                        # Count today's predictions
+                        if log_entry['timestamp'].startswith(today):
+                            metrics['predictions_today'] += 1
+
+                        # Count class distribution
+                        pred_class = log_entry['prediction']
+                        metrics['class_distribution'][pred_class] = metrics['class_distribution'].get(pred_class, 0) + 1
+
+        return jsonify(metrics)
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+if __name__ == '__main__':
+    # Create logs directory if it doesn't exist
+    os.makedirs('logs', exist_ok=True)
+    app.run(debug=True, host='0.0.0.0', port=5000)
+```
+
+**Step 4: Test the API (10 minutes)**
+
+Create file: `notebooks/test_api.ipynb`
+
+```python
+import requests
+import json
+import numpy as np
+
+# API base URL
+BASE_URL = 'http://localhost:5000'
+
+# Test health endpoint
+print("Testing health endpoint...")
+response = requests.get(f'{BASE_URL}/health')
+print(f"Status Code: {response.status_code}")
+print(f"Response: {response.json()}")
+
+# Test prediction endpoint
+print("\nTesting prediction endpoint...")
+
+# Create sample features (same format as training data)
+sample_features = np.random.randn(10).tolist()  # 10 features
+
+prediction_data = {
+    'features': sample_features
+}
+
+response = requests.post(
+    f'{BASE_URL}/predict',
+    json=prediction_data,
+    headers={'Content-Type': 'application/json'}
+)
+
+print(f"Status Code: {response.status_code}")
+print(f"Response: {response.json()}")
+
+# Make multiple predictions for testing
+print("\nMaking multiple predictions...")
+for i in range(5):
+    sample_features = np.random.randn(10).tolist()
+    prediction_data = {'features': sample_features}
+
+    response = requests.post(
+        f'{BASE_URL}/predict',
+        json=prediction_data,
+        headers={'Content-Type': 'application/json'}
+    )
+
+    if response.status_code == 200:
+        result = response.json()
+        print(f"Prediction {i+1}: Class {result['prediction']}, Probability: {result['probability']}")
+
+# Test metrics endpoint
+print("\nTesting metrics endpoint...")
+response = requests.get(f'{BASE_URL}/metrics')
+print(f"Status Code: {response.status_code}")
+print(f"Metrics: {response.json()}")
+```
+
+### Demo 2: Introduction to LLM APIs (30 minutes)
+
+**Step 1: Setup LLM API Access**
+
+Create file: `notebooks/llm_introduction.ipynb`
+
+```python
+import requests
+import json
+import time
+from datetime import datetime
+import os
+
+# Note: This example uses a hypothetical LLM API
+# In practice, you would use OpenAI, Hugging Face, or other providers
+
+class SimpleLLMClient:
+    def __init__(self, api_key=None):
+        self.api_key = api_key
+        self.base_url = "https://api.example-llm.com/v1"  # Placeholder URL
+        self.conversation_history = []
+
+    def generate_response(self, prompt, max_tokens=150, temperature=0.7):
+        """
+        Simulate LLM API call
+        In practice, this would call actual LLM APIs
+        """
+        # Simulate API response for demo purposes
+        simulated_responses = [
+            "This is a simulated response to demonstrate LLM integration.",
+            "Machine learning operations (MLOps) is crucial for production ML systems.",
+            "Large Language Models require careful monitoring and observability.",
+            "Prompt engineering is an important skill for working with LLMs.",
+            "Model deployment should include proper logging and metrics collection."
+        ]
+
+        import random
+        response_text = random.choice(simulated_responses)
+
+        # Log the interaction
+        interaction = {
+            'timestamp': datetime.now().isoformat(),
+            'prompt': prompt,
+            'response': response_text,
+            'max_tokens': max_tokens,
+            'temperature': temperature,
+            'response_time': round(random.uniform(0.5, 2.0), 3)  # Simulated response time
+        }
+
+        self.conversation_history.append(interaction)
+
+        # Save to log file
+        self._log_interaction(interaction)
+
+        return response_text, interaction
+
+    def _log_interaction(self, interaction):
+        """Log LLM interactions for observability"""
+        os.makedirs('logs', exist_ok=True)
+
+        with open('logs/llm_interactions.log', 'a') as f:
+            f.write(json.dumps(interaction) + '\n')
+
+    def get_conversation_stats(self):
+        """Get basic statistics about conversations"""
+        if not self.conversation_history:
+            return {"message": "No conversations yet"}
+
+        total_interactions = len(self.conversation_history)
+        avg_response_time = sum(i['response_time'] for i in self.conversation_history) / total_interactions
+        total_tokens_used = sum(len(i['prompt'].split()) + len(i['response'].split()) 
+                               for i in self.conversation_history)
+
+        return {
+            'total_interactions': total_interactions,
+            'average_response_time': round(avg_response_time, 3),
+            'estimated_tokens_used': total_tokens_used
+        }
+
+# Initialize LLM client
+llm_client = SimpleLLMClient()
+
+# Test different types of prompts
+test_prompts = [
+    "What is MLOps and why is it important?",
+    "Explain the difference between CI and CD in machine learning.",
+    "What are the key challenges in monitoring LLM systems?",
+    "How do you ensure quality in LLM responses?",
+    "What metrics should be tracked for ML model performance?"
+]
+
+print("Testing LLM API with different prompts...\n")
+
+for i, prompt in enumerate(test_prompts, 1):
+    print(f"Prompt {i}: {prompt}")
+    response, interaction = llm_client.generate_response(prompt)
+    print(f"Response: {response}")
+    print(f"Response Time: {interaction['response_time']}s")
+    print("-" * 50)
+    time.sleep(1)  # Rate limiting
+
+# Display conversation statistics
+print("\nConversation Statistics:")
+stats = llm_client.get_conversation_stats()
+for key, value in stats.items():
+    print(f"{key}: {value}")
+```
+
+**Step 2: Basic LLM Observability Setup**
+
+Create file: `llm_monitor.py`
+
+```python
+import json
+import pandas as pd
+from datetime import datetime, timedelta
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+class LLMMonitor:
+    def __init__(self, log_file='logs/llm_interactions.log'):
+        self.log_file = log_file
+
+    def load_interactions(self):
+        """Load all logged interactions"""
+        interactions = []
+
+        try:
+            with open(self.log_file, 'r') as f:
+                for line in f:
+                    if line.strip():
+                        interactions.append(json.loads(line.strip()))
+        except FileNotFoundError:
+            print(f"Log file {self.log_file} not found")
+            return pd.DataFrame()
+
+        return pd.DataFrame(interactions)
+
+    def calculate_metrics(self):
+        """Calculate key LLM metrics"""
+        df = self.load_interactions()
+
+        if df.empty:
+            return {}
+
+        # Convert timestamp to datetime
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+
+        metrics = {
+            'total_interactions': len(df),
+            'average_response_time': df['response_time'].mean(),
+            'max_response_time': df['response_time'].max(),
+            'min_response_time': df['response_time'].min(),
+            'average_prompt_length': df['prompt'].str.len().mean(),
+            'average_response_length': df['response'].str.len().mean(),
+            'interactions_last_hour': len(df[df['timestamp'] > datetime.now() - timedelta(hours=1)]),
+            'interactions_last_24h': len(df[df['timestamp'] > datetime.now() - timedelta(days=1)])
+        }
+
+        return metrics
+
+    def generate_report(self):
+        """Generate a monitoring report"""
+        metrics = self.calculate_metrics()
+
+        print("=== LLM Monitoring Report ===")
+        print(f"Generated at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print()
+
+        if not metrics:
+            print("No data available")
+            return
+
+        print("📊 Usage Metrics:")
+        print(f"  Total Interactions: {metrics['total_interactions']}")
+        print(f"  Last Hour: {metrics['interactions_last_hour']}")
+        print(f"  Last 24 Hours: {metrics['interactions_last_24h']}")
+        print()
+
+        print("⏱️ Performance Metrics:")
+        print(f"  Average Response Time: {metrics['average_response_time']:.3f}s")
+        print(f"  Max Response Time: {metrics['max_response_time']:.3f}s")
+        print(f"  Min Response Time: {metrics['min_response_time']:.3f}s")
+        print()
+
+        print("📝 Content Metrics:")
+        print(f"  Average Prompt Length: {metrics['average_prompt_length']:.1f} characters")
+        print(f"  Average Response Length: {metrics['average_response_length']:.1f} characters")
+        print()
+
+    def plot_response_times(self):
+        """Plot response time trends"""
+        df = self.load_interactions()
+
+        if df.empty:
+            print("No data to plot")
+            return
+
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+
+        plt.figure(figsize=(12, 6))
+        plt.subplot(1, 2, 1)
+        plt.plot(df['timestamp'], df['response_time'], marker='o')
+        plt.title('Response Time Over Time')
+        plt.xlabel('Timestamp')
+        plt.ylabel('Response Time (seconds)')
+        plt.xticks(rotation=45)
+
+        plt.subplot(1, 2, 2)
+        plt.hist(df['response_time'], bins=10, alpha=0.7)
+        plt.title('Response Time Distribution')
+        plt.xlabel('Response Time (seconds)')
+        plt.ylabel('Frequency')
+
+        plt.tight_layout()
+        plt.show()
+
+# Test the monitoring system
+if __name__ == "__main__":
+    monitor = LLMMonitor()
+    monitor.generate_report()
+    monitor.plot_response_times()
+```
+
+### Final Lab Exercise: Integration Test (30 minutes)
+
+Create file: `notebooks/integration_test.ipynb`
+
+```python
+import subprocess
+import time
+import requests
+import json
+from llm_monitor import LLMMonitor
+
+print("=== MLOps and LLM Integration Test ===\n")
+
+# Step 1: Test ML Model API
+print("1. Testing ML Model API...")
+try:
+    # Check if Flask app is running
+    response = requests.get('http://localhost:5000/health', timeout=5)
+    if response.status_code == 200:
+        print("✅ ML Model API is running")
+
+        # Make a test prediction
+        sample_data = {
+            'features': [0.5, -0.2, 1.1, 0.8, -0.5, 0.3, -0.1, 0.9, 0.2, -0.3]
+        }
+
+        pred_response = requests.post(
+            'http://localhost:5000/predict',
+            json=sample_data,
+            headers={'Content-Type': 'application/json'}
+        )
+
+        if pred_response.status_code == 200:
+            result = pred_response.json()
+            print(f"✅ Prediction successful: Class {result['prediction']}")
+        else:
+            print("❌ Prediction failed")
+
+    else:
+        print("❌ ML Model API health check failed")
+
+except requests.exceptions.RequestException:
+    print("❌ ML Model API is not accessible")
+    print("   Make sure to run: python app.py")
+
+print()
+
+# Step 2: Test LLM Integration
+print("2. Testing LLM Integration...")
+try:
+    # Import the LLM client class correctly
+    import sys
+    import os
+    import import_ipynb
+    import llm_introduction as llm_intro
+
+    llm_client = llm_intro.SimpleLLMClient()
+
+    test_prompt = "What are the benefits of MLOps?"
+    response, interaction = llm_client.generate_response(test_prompt)
+
+    print(f"✅ LLM response generated")
+    print(f"   Prompt: {test_prompt}")
+    print(f"   Response: {response[:100]}...")
+    print(f"   Response time: {interaction['response_time']}s")
+
+except Exception as e:
+    print(f"❌ LLM integration failed: {str(e)}")
+
+print()
+
+# Step 3: Test Monitoring
+print("3. Testing Monitoring Systems...")
+try:
+    monitor = LLMMonitor()
+    metrics = monitor.calculate_metrics()
+
+    if metrics:
+        print("✅ LLM monitoring active")
+        print(f"   Total interactions: {metrics['total_interactions']}")
+        print(f"   Average response time: {metrics['average_response_time']:.3f}s")
+    else:
+        print("⚠️ No LLM monitoring data available")
+
+except Exception as e:
+    print(f"❌ Monitoring failed: {str(e)}")
+
+print()
+
+# Step 4: Generate Summary Report
+print("4. System Status Summary")
+print("=" * 40)
+
+# Check ML API metrics
+try:
+    ml_metrics = requests.get('http://localhost:5000/metrics').json()
+    print(f"ML API - Total Predictions: {ml_metrics.get('total_predictions', 0)}")
+except:
+    print("ML API - Status: Offline")
+
+# Check LLM metrics
+try:
+    monitor = LLMMonitor()
+    llm_metrics = monitor.calculate_metrics()
+    if llm_metrics:
+        print(f"LLM System - Total Interactions: {llm_metrics['total_interactions']}")
+    else:
+        print("LLM System - No data")
+except:
+    print("LLM System - Status: Error")
+```
+
+## Instructions for Running the Lab
+
+### Pre-Lab Setup
+
+1. **Start in project directory**: `cd mlops-llm-course`
+2. **Activate virtual environment**: `source mlops-env/bin/activate` (Mac/Linux) or `mlops-env\Scripts\activate` (Windows)
+3. **Start Jupyter**: `jupyter notebook`
+
+### Lab Execution Order
+
+1. **Run notebook 01**: Data preparation (10 minutes)
+2. **Run notebook 02**: Model training (15 minutes)
+3. **Start Flask app**: `python app.py` in separate terminal (keep running)
+4. **Run notebook 03**: Test API (10 minutes)
+5. **Run notebook 04**: LLM introduction (15 minutes)
+6. **Test monitoring**: `python llm_monitor.py` (5 minutes)
+7. **Run notebook 05**: Integration test (10 minutes)
+
+### Expected Outcomes
+
+- ✅ Working ML model API with basic logging
+- ✅ Simple LLM integration with observability
+- ✅ Basic monitoring and metrics collection
+- ✅ Understanding of MLOps workflow fundamentals
+
+### Troubleshooting
+
+- **Port conflicts**: Change Flask port in `app.py` if 5000 is occupied
+- **Import errors**: Ensure all packages are installed in virtual environment
+- **API not responding**: Check Flask app is running and accessible
+- **File not found**: Verify you're in the correct directory structure
